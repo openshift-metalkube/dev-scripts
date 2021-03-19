@@ -245,7 +245,108 @@ EOF
     cp "${outdir}/install-config.yaml" "${outdir}/install-config.yaml.save"
 }
 
-function generate_ocp_host_manifest() {
+function extra_host_annotations() {
+  name=$1
+  vmname=${name#"${CLUSTER_NAME}-"}
+  vmmac=$(grep ${vmname} /var/lib/libvirt/dnsmasq/ostestbm.hostsfile | cut -d"," -f1)
+  vmip=$(grep ${vmname} /var/lib/libvirt/dnsmasq/ostestbm.hostsfile | cut -d"," -f2)
+  if [ ! -z "${EXTRA_HOST_INSPECT_DISABLED:-}" ]; then
+cat <<EOF
+  annotations:
+    inspect.metal3.io: disabled
+    inspect.metal3.io/hardwaredetails: '{"nics":[{"name":"enp1s0","mac": "$vmmac", "ip":"${vmip}"}],"hostname":"${name}"}'
+EOF
+  fi
+}
+
+function extra_host_image() {
+  name=$1
+  outdir="$2"
+  IMAGE_NAME=${MACHINE_OS_ISO_IMAGE_NAME}
+  if [ ! -z "${TEST_LIVE_ISO:-}" ]; then
+    if [ ! -z "${LIVE_ISO_CONFIG_EMBED:-}" ]; then
+      IMAGE_NAME=${MACHINE_OS_ISO_IMAGE_NAME%.iso}-${name}.iso
+      cp ${IRONIC_DATA_DIR}/html/images/${MACHINE_OS_ISO_IMAGE_NAME} ${IRONIC_DATA_DIR}/html/images/${IMAGE_NAME}
+      sudo podman run --pull=always --privileged --rm -v /dev:/dev -v /run/udev:/run/udev -v ./${outdir}:/data -v ${IRONIC_DATA_DIR}/html/images:/images -w /data quay.io/coreos/coreos-installer:release iso ignition embed -i /data/${name}-userData.json /images/${IMAGE_NAME} -f
+    fi
+cat <<EOF
+  image:
+    url: http://$(wrap_if_ipv6 $MIRROR_IP)/images/${IMAGE_NAME}
+    format: live-iso
+EOF
+  fi
+}
+
+function extra_host_userdata() {
+  name=$1
+  if [ ! -z "${TEST_LIVE_ISO:-}" -a -z "${LIVE_ISO_CONFIG_EMBED:-}" ]; then
+cat <<EOF
+  userData:
+    name: ${name}-userdata-secret
+    namespace: openshift-machine-api
+EOF
+  fi
+}
+
+function extra_host_userdata_secret() {
+  name="$1"
+  outdir="$2"
+  if [ ! -z "${TEST_LIVE_ISO:-}" ]; then
+    EXTRA_HOST_IGN=$(oc get secret worker-user-data -n openshift-machine-api -o json | jq -r .data.userData)
+    set +x
+    EXTRA_HOST_PASSWORD=FIXME
+    EXTRA_HOST_PWHASH=$(echo ${EXTRA_HOST_PASSWORD} | openssl passwd -6 -stdin)
+    set -x
+    EXTRA_HOST_USERDATA=$(cat <<EOF
+{
+  "ignition": { "version": "3.2.0" },
+  "passwd": {
+    "users": [
+      {
+        "name": "core",
+        "passwordHash": "${EXTRA_HOST_PWHASH}",
+        "groups": [ "sudo" ]
+      }
+    ]
+  },
+  "systemd": {
+    "units": [{
+      "name": "coreos_installer.service",
+      "enabled": true,
+      "contents": "[Unit]\nAfter=network.target\nAfter=network-online.target\n[Service]\nType=oneshot\nExecStart=/bin/sh -c 'while ! /usr/bin/coreos-installer install --insecure -i /home/core/config.ign ${ROOT_DISK_NAME}; do sleep 5; done'\nExecStartPost=/bin/sh -c 'efibootmgr -d ${ROOT_DISK_NAME} -p 2 -c -L fcos -l \"\\\EFI\\\BOOT\\\BOOTX64.EFI\"; efibootmgr -n 3; reboot'\n\n[Install]\nWantedBy=multi-user.target"
+}]
+},
+"storage": {
+    "files": [{
+      "filesystem": "root",
+      "path": "/home/core/config.ign",
+      "mode": 644,
+      "contents": { "source": "data:text/plain;base64,${EXTRA_HOST_IGN}" }
+    }]
+  }
+}
+EOF)
+
+# Write the unencoded userData for easier debugging and so it
+# can optionally be embedded into the iso
+echo "${EXTRA_HOST_USERDATA}" > ${outdir}/${name}-userData.json
+
+    if [ -z "${LIVE_ISO_CONFIG_EMBED:-}" ]; then
+      cat <<EOF
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ${name}-userdata-secret
+  namespace: openshift-machine-api
+type: Opaque
+data:
+  userData: $(echo ${EXTRA_HOST_USERDATA} | base64 -w 0)
+EOF
+    fi
+  fi
+}
+
+function generate_extra_host_manifest() {
     local outdir
 
     outdir="$1"
@@ -255,6 +356,7 @@ function generate_ocp_host_manifest() {
 
     mkdir -p "${outdir}"
     rm -f "${outdir}/extra_hosts.yaml"
+    rm -f "${outdir}/${host_output}"
 
     jq --raw-output '.[] | .name + " " + .ports[0].address + " " + .driver_info.username + " " + .driver_info.password + " " + .driver_info.address' $host_input \
        | while read name mac username password address ; do
@@ -273,19 +375,23 @@ type: Opaque
 data:
   username: $encoded_username
   password: $encoded_password
-
+---
+$(extra_host_userdata_secret ${name} ${outdir})
 ---
 apiVersion: metal3.io/v1alpha1
 kind: BareMetalHost
 metadata:
   name: $name
   namespace: $namespace
+$(extra_host_annotations ${name})
 spec:
   online: ${EXTRA_WORKERS_ONLINE_STATUS}
   bootMACAddress: $mac
   bmc:
     address: $address
     credentialsName: ${name}-bmc-secret
+$(extra_host_image ${name} ${outdir})
+$(extra_host_userdata ${name})
 EOF
 
     done

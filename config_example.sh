@@ -220,3 +220,19 @@ set -x
 # certificate store. This trust bundle may also be used when a proxy has 
 # been configured.
 # export ADDITIONAL_TRUST_BUNDLE=/path/to/ca_file
+
+
+##
+## Experimental/unsupported options
+##
+
+# Enable dev-testing with the installer live-iso
+#export TEST_LIVE_ISO=true
+
+# Indicate the extra hosts should be annotated to skip inspection
+#EXTRA_HOST_INSPECT_DISABLED=true
+
+# When using TEST_LIVE_ISO=true embed the ignition config
+# in the iso, instead of the default which is to provide it
+# via the ironic config drive (using the BMH userData field)
+# export LIVE_ISO_CONFIG_EMBED=true
