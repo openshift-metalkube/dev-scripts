@@ -288,3 +288,20 @@ fi
 
 # Defaults the variable to enable testing a custom machine-api-operator image
 export TEST_CUSTOM_MAO=${TEST_CUSTOM_MAO:-false}
+
+# VLAN to configure for baremetal network
+# Enabled only when a number between 2 and 4094 is specified
+export BAREMETAL_NETWORK_VLAN=${BAREMETAL_NETWORK_VLAN:-}
+export BAREMETAL_NETWORK_VLAN_WORKAROUND=${BAREMETAL_NETWORK_VLAN_WORKAROUND:-}
+if [[ -n "${BAREMETAL_NETWORK_VLAN}" ]] ; then
+  if ! [[ "${BAREMETAL_NETWORK_VLAN}" =~ ^[0-9]+$ ]] ; then
+     error "BAREMETAL_NETWORK_VLAN value must be an integer."
+     exit 1
+  fi
+  if [[ "${BAREMETAL_NETWORK_VLAN}" -lt 2 ]] || [[ "${BAREMETAL_NETWORK_VLAN}" -gt 4094 ]] ; then
+     echo "Wrong BAREMETAL_NETWORK_VLAN value: "${BAREMETAL_NETWORK_VLAN}" specified. Specify a VLAN value between 2 and 4094"
+     exit 1
+  fi
+  export BAREMETAL_VM_NIC=${BAREMETAL_VM_NIC:-enp1s0}
+  export BAREMETAL_NETWORK_VLAN_INTERFACE=${PROVISIONING_NETWORK_NAME}.${BAREMETAL_NETWORK_VLAN}
+fi
