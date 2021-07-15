@@ -104,10 +104,6 @@ if [ -d "/home/notstack/ironic-image" ] ; then
     export IRONIC_LOCAL_IMAGE=https://github.com/metal3-io/ironic-image
     export UPSTREAM_IRONIC=true
 fi
-if [ -d "/home/notstack/ironic-inspector-image" ] ; then
-    export IRONIC_INSPECTOR_LOCAL_IMAGE=https://github.com/metal3-io/ironic-inspector-image
-    export UPSTREAM_IRONIC=true
-fi
 if [ -d "/home/notstack/baremetal-runtimecfg" ] ; then
     export BAREMETAL_RUNTIMECFG_LOCAL_IMAGE=https://github.com/openshift/baremetal-runtimecfg
 fi
